@@ -1,100 +1,40 @@
+from fastapi import FastAPI 
+from contextlib import asynccontextmanager
+from app.api.tasks import router as tasks_router
+from app.core.errors import AppError, app_error_handler
+from app.dependencies import ResourceDep
+from app.core.config import get_settings
 
-from datetime import UTC, datetime
-from typing import Annotated
+settings = get_settings()
 
-from fastapi import FastAPI, Path, Query
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("TaskFlow is Starting...")
 
-from app.schemas.task import TaskCreate, TaskRead, TaskStatus
+    yield
 
+    print("Taskflow is shutting down...")
 
 app = FastAPI(
     title="TaskFlow API",
-    description="A task management API built with FastAPI",
+    description="API for managing tasks in TaskFlow application",
     version="0.1.0",
+    lifespan=lifespan
 )
 
+app.add_exception_handler(
+    AppError,
+    app_error_handler
+)
 
-# Temporary sample data.
-sample_tasks: list[TaskRead] = [
-    TaskRead(
-        id=1,
-        title="Learn FastAPI",
-        description="Understand routing and validation",
-        status=TaskStatus.in_progress,
-        due_at=None,
-        created_at=datetime(2026, 10, 20, tzinfo=UTC),
-    ),
-    TaskRead(
-        id=2,
-        title="Build the TaskFlow API",
-        description="Implement the first endpoints",
-        status=TaskStatus.todo,
-        due_at=None,
-        created_at=datetime(2026, 10, 21, tzinfo=UTC),
-    ),
-    TaskRead(
-        id=3,
-        title="Review HTTP fundamentals",
-        description=None,
-        status=TaskStatus.done,
-        due_at=None,
-        created_at=datetime(2026, 10, 22, tzinfo=UTC),
-    ),
-]
-
+app.include_router(tasks_router)
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+async def health_check():
+    return {"status": "ok", "message": "TaskFlow API is running smoothly."}
 
-@app.post("/tasks", response_model=TaskRead, status_code=201)
-async def create_task(task: TaskCreate) -> TaskRead:
-    new_task = TaskRead(
-        id=len(sample_tasks) + 1,
-        created_at=datetime.now(tz=UTC),
-        **task.dict(),
-    )
-
-    sample_tasks.append(new_task)
-
-    return new_task
-
-
-@app.get("/tasks", response_model=list[TaskRead])
-async def list_tasks(
-    status: TaskStatus | None = None,
-    q: Annotated[str | None, Query(min_length=2)] = None,
-) -> list[TaskRead]:
-    results = sample_tasks
-
-    if status is not None:
-        results = [
-            task for task in results
-            if task.status == status
-        ]
-
-    if q is not None:
-        search_term = q.casefold()
-
-        results = [
-            task for task in results
-            if search_term in task.title.casefold()
-        ]
-
-    return results
-
-
-@app.get("/tasks/{task_id}", response_model=TaskRead)
-async def get_task(
-    task_id: Annotated[int, Path(gt=0)],
-) -> TaskRead:
-    for task in sample_tasks:
-        if task.id == task_id:
-            return task
-
-    from fastapi import HTTPException, status as http_status
-
-    raise HTTPException(
-        status_code=http_status.HTTP_404_NOT_FOUND,
-        detail="Task not found",
-    )
+@app.get("/resource")
+async def get_resource_data(
+    resource: ResourceDep
+):
+    return resource

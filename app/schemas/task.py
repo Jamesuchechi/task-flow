@@ -29,3 +29,16 @@ class TaskCreate(BaseModel):
 class TaskRead(TaskCreate):
     id: int
     created_at: datetime
+
+class TaskUpdate(BaseModel):
+    title: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=120
+    )
+    description: str | None = Field(
+        default=None,
+        max_length=2000
+    )
+    status: TaskStatus | None = None
+    due_at: datetime | None = None
