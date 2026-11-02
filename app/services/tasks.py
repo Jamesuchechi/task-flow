@@ -1,86 +1,43 @@
-from datetime import datetime, UTC
-from app.schemas.task import TaskCreate, TaskStatus, TaskRead, TaskUpdate
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError
+from app.db.models import Task
+from app.schemas.task import TaskCreate, TaskUpdate
 
 class TaskService:
-    def __init__(self):
-        self.tasks: list[TaskRead] = [
-            TaskRead(
-                id=1,
-                title="Learn FastAPI",
-                description="Learn how to build APIs with FastAPI",
-                status=TaskStatus.in_progress,
-                due_at=None,
-                created_at=datetime(2026,10,20, tzinfo=UTC),
-            ),
+    def __init__(self, db: AsyncSession):
+        self.db = db
 
-            TaskRead(
-                id=2,
-                title="Build The Taskflow API",
-                description="Implement the first endpoint",
-                status=TaskStatus.todo,
-                due_at=None,
-                created_at=datetime(2026, 10, 21, tzinfo=UTC)
-            ),
-
-            TaskRead(
-                id=3,
-                title="Review HTTP fundamentals",
-                description=None,
-                status=TaskStatus.done,
-                due_at=None,
-                created_at=datetime(2026, 10, 22, tzinfo=UTC)
-            ),
-
-        ]
-        self.next_id = 4
-
-    def create(self, data: TaskCreate) -> TaskRead:
-        task = TaskRead(
-            id=self.next_id,
-            created_at=datetime.now(UTC),
-            **data.model_dump(),
-        )
-
-        self.tasks.append(task)
-        self.next_id += 1
-
+    async def create(self, data: TaskCreate) -> Task:
+        task = Task(**data.model_dump())
+        self.db.add(task)
+        await self.db.commit()
+        await self.db.refresh(task)
         return task
 
-    def get_all(self) -> list[TaskRead]:
-        return self.tasks
-
-    def get_by_id(self, task_id: int) -> bool:
-        for task in self.tasks:
-            if task.id == task_id:
-                return task
-        return None
-
-    def delete(self, task_id: int) -> bool:
-        task = self.get_by_id(task_id)
+    async def get_by_id(self, task_id: int) -> Task:
+        task = await self.db.get(Task, task_id)
         if task is None:
-            return False
-        self.tasks.remove(task)
-        return True
+            raise AppError(status_code=404, detail="Task not found")
+        return task
 
-    def update(
-        self,
-        task_id: int,
-        data: TaskUpdate
-    ) -> TaskRead | None:
-        task = self.get_by_id(task_id)
-        if task is None:
-            return None
+    async def get_all(self) -> list[Task]:
+        result = await self.db.execute(select(Task))
+        return list(result.scalars().all())
 
+    async def update(self, task_id: int, data: TaskUpdate) -> Task:
+        task = await self.get_by_id(task_id)
         update_data = data.model_dump(exclude_unset=True)
-        if "title" in update_data and update_data["title"] is None:
-            raise AppError(
-                code="INVALID_TASK_TITLE",
-                message="Task title cannot be null",
-                status_code=400
-            )
 
-        updated_task = task.model_copy(update=update_data)
-        self.tasks[self.tasks.index(task)] = updated_task
+        for field, value in update_data.items():
+            if field in {"title", "status" } and value is None:
+                raise AppError(status_code=400, detail=f"{field} cannot be None")
+            setattr(task, field, value)
+        await self.db.commit()
+        await self.db.refresh(task)
+        return task
 
-        return updated_task
+    async def delete(self, task_id: int) -> None:
+        task = await self.get_by_id(task_id)
+        await self.db.delete(task)
+        await self.db.commit()
