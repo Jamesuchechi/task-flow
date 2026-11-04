@@ -2,14 +2,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError
 from app.db.models import Task
+from app.schemas import task
 from app.schemas.task import TaskCreate, TaskUpdate
 
 class TaskService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def create(self, data: TaskCreate) -> Task:
-        task = Task(**data.model_dump())
+    async def create(self, data: TaskCreate, user_id: int) -> Task:
+        task = Task(**data.model_dump(), owner_id=user_id)
         self.db.add(task)
         await self.db.commit()
         await self.db.refresh(task)
@@ -41,3 +42,11 @@ class TaskService:
         task = await self.get_by_id(task_id)
         await self.db.delete(task)
         await self.db.commit()
+
+    async def get_user_tasks(
+        self,
+        user_id: int
+    ) -> list[Task]:
+
+        results = await self.db.execute(select(Task).where(Task.owner_id == user_id))
+        return list(results.scalars().all())
