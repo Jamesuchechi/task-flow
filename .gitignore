@@ -9,3 +9,7 @@ wheels/
 # Virtual environments
 .venv
 .env
+
+# Runtime uploads & exports
+uploads/
+exports/

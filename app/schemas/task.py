@@ -3,6 +3,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.attachment import AttachmentRead
+
 
 class TaskStatus(StrEnum):
     todo = "todo"
@@ -52,4 +54,6 @@ class TaskRead(TaskCreate):
     )
 
     id: int
+    owner_id: int
     created_at: datetime
+    attachments: list[AttachmentRead] = Field(default_factory=list)

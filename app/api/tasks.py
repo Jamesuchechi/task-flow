@@ -1,97 +1,112 @@
+from typing import Annotated, Literal
 
-from typing import Annotated
+from fastapi import APIRouter, BackgroundTasks, Path, Query, Response, status
 
-from fastapi import APIRouter, HTTPException, Path, Query, status
-
-from app.dependencies import TaskServiceDep, CurrentUser
+from app.dependencies import CurrentUser, TaskServiceDep
+from app.schemas.pagination import PaginatedResponse
 from app.schemas.task import TaskCreate, TaskRead, TaskStatus, TaskUpdate
-
+from app.services.jobs import log_task_activity
 
 router = APIRouter(
     prefix="/tasks",
-    tags=["Tasks"]
+    tags=["Tasks"],
 )
 
 
 @router.post(
     "",
     response_model=TaskRead,
-    status_code=status.HTTP_201_CREATED
+    status_code=status.HTTP_201_CREATED,
 )
 async def create_task(
     data: TaskCreate,
     service: TaskServiceDep,
-    current_user: CurrentUser
+    current_user: CurrentUser,
+    background_tasks: BackgroundTasks,
 ):
-    return await service.create(data, user_id=current_user.id)
+    task = await service.create(data, user_id=current_user.id)
+    background_tasks.add_task(
+        log_task_activity, "task.created", task.id, current_user.id
+    )
+    return task
 
 
 @router.get(
     "",
-    response_model=list[TaskRead]
+    response_model=PaginatedResponse[TaskRead],
 )
 async def list_tasks(
+    response: Response,
     service: TaskServiceDep,
     current_user: CurrentUser,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     task_status: Annotated[
         TaskStatus | None,
-        Query(alias="status")
+        Query(alias="status"),
     ] = None,
     q: Annotated[str | None, Query(min_length=2)] = None,
+    sort_by: Literal["created_at", "due_at", "title", "status"] = "created_at",
+    sort_order: Literal["asc", "desc"] = "desc",
 ):
-    results = await service.get_user_tasks(user_id=current_user.id)
-
-    if task_status is not None:
-        results = [
-            task for task in results
-            if task.status == task_status
-        ]
-
-    if q is not None:
-        search_term = q.casefold()
-
-        results = [
-            task for task in results
-            if search_term in task.title.casefold()
-        ]
-
-    return results
+    paginated, cache_hit = await service.get_user_tasks_paginated(
+        user_id=current_user.id,
+        page=page,
+        page_size=page_size,
+        task_status=task_status,
+        q=q,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    response.headers["X-Cache"] = "HIT" if cache_hit else "MISS"
+    return paginated
 
 
 @router.get(
     "/{task_id}",
-    response_model=TaskRead
+    response_model=TaskRead,
 )
 async def get_task(
     task_id: Annotated[int, Path(gt=0)],
+    response: Response,
     service: TaskServiceDep,
-    current_user: CurrentUser
+    current_user: CurrentUser,
 ):
-    task = await service.get_by_id(task_id)
-    if task.owner_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    task, cache_hit = await service.get_by_id_cached(task_id, current_user.id)
+    response.headers["X-Cache"] = "HIT" if cache_hit else "MISS"
     return task
 
 
 @router.patch(
     "/{task_id}",
-    response_model=TaskRead
+    response_model=TaskRead,
 )
 async def update_task(
     task_id: Annotated[int, Path(gt=0)],
     data: TaskUpdate,
-    service: TaskServiceDep
+    service: TaskServiceDep,
+    current_user: CurrentUser,
+    background_tasks: BackgroundTasks,
 ):
-    return await service.update(task_id, data)
+    task = await service.update(task_id, data, user_id=current_user.id)
+    background_tasks.add_task(
+        log_task_activity, "task.updated", task.id, current_user.id
+    )
+    return task
 
 
 @router.delete(
     "/{task_id}",
-    status_code=status.HTTP_204_NO_CONTENT
+    status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_task(
     task_id: Annotated[int, Path(gt=0)],
-    service: TaskServiceDep
+    service: TaskServiceDep,
+    current_user: CurrentUser,
+    background_tasks: BackgroundTasks,
 ):
-    await service.delete(task_id)
+    await service.delete(task_id, user_id=current_user.id)
+    background_tasks.add_task(
+        log_task_activity, "task.deleted", task_id, current_user.id
+    )
     return None

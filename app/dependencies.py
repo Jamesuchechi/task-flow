@@ -7,12 +7,13 @@ from jwt.exceptions import InvalidTokenError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
+from app.services.attachments import AttachmentService
+from app.services.jobs import JobService
 from app.services.tasks import TaskService
 from app.services.users import UserService
 
 from app.core.config import get_settings
 from app.db.models import User
-from app.services.users import UserService
 
 settings = get_settings()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
@@ -35,6 +36,24 @@ UserServiceDep = Annotated[
 ]
 
 
+async def get_user_from_token(
+    token: str,
+    service: UserService,
+) -> User | None:
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_algorithm],
+        )
+        user_id = payload.get("sub")
+        if user_id is None:
+            return None
+        return await service.get_by_id(int(user_id))
+    except (InvalidTokenError, ValueError):
+        return None
+
+
 async def get_current_user(
     token: Annotated[
         str,
@@ -42,7 +61,6 @@ async def get_current_user(
     ],
     service: UserServiceDep,
 ) -> User:
-
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -51,26 +69,7 @@ async def get_current_user(
         }
     )
 
-    try:
-
-        payload = jwt.decode(
-            token,
-            settings.jwt_secret,
-            algorithms=[settings.jwt_algorithm],
-        )
-
-        user_id = payload.get("sub")
-
-        if user_id is None:
-            raise credentials_exception
-
-    except InvalidTokenError:
-        raise credentials_exception
-
-    user = await service.get_by_id(
-        int(user_id)
-    )
-
+    user = await get_user_from_token(token, service)
     if user is None:
         raise credentials_exception
 
@@ -102,6 +101,26 @@ def get_task_service(
 TaskServiceDep = Annotated[
     TaskService,
     Depends(get_task_service)
+]
+
+
+def get_attachment_service(db: DatabaseDep) -> AttachmentService:
+    return AttachmentService(db)
+
+
+AttachmentServiceDep = Annotated[
+    AttachmentService,
+    Depends(get_attachment_service),
+]
+
+
+def get_job_service(db: DatabaseDep) -> JobService:
+    return JobService(db)
+
+
+JobServiceDep = Annotated[
+    JobService,
+    Depends(get_job_service),
 ]
 
 
